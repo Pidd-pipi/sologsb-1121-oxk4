@@ -16,12 +16,14 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { PlusOutlined } from '@ant-design/icons';
+import { PlusOutlined, LockOutlined } from '@ant-design/icons';
 import { usePlotStore } from '../stores/plotStore';
 import { useTreeStore } from '../stores/treeStore';
 import { useTreeStats } from '../hooks/useTreeStats';
+import { useInspection } from '../hooks/useInspection';
 import TreeTable from '../components/common/TreeTable';
 import RoundTag from '../components/common/RoundTag';
+import InspectionActions from '../components/inspection/InspectionActions';
 import {
   HEALTH_CLASSES,
   TREE_ORIGINS,
@@ -53,6 +55,8 @@ export default function TreeEntry() {
 
   const stats = useTreeStats(id, round);
   const peers = trees.filter((t) => t.plotId === id);
+  const inspection = useInspection(id, round);
+  const locked = inspection?.status === '已交验';
 
   const [speciesFilter, setSpeciesFilter] = useState('all');
   const [form, setForm] = useState<TreeRecordDraft>({
@@ -89,6 +93,7 @@ export default function TreeEntry() {
   );
 
   const submit = async () => {
+    if (locked) return;
     if (!form.treeNo.trim()) {
       setError('树号必填');
       return;
@@ -122,9 +127,10 @@ export default function TreeEntry() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           样木录入 · {plot.plotNo}
         </Typography.Title>
-        <RoundTag round={round} locked={plot.locked} />
+        <RoundTag round={round} status={inspection?.status} />
         <Tag>{plot.forestType}</Tag>
         <Tag color="green">优势树种 {plot.dominantSpecies}</Tag>
+        {inspection ? <InspectionActions plotId={plot.id} round={round} /> : null}
         <div style={{ flex: 1 }} />
         <Button type="link">
           <Link to={`/plots/${plot.id}/regen`}>更新与灌木</Link>
@@ -139,6 +145,21 @@ export default function TreeEntry() {
           <Link to="/plots">返回台账</Link>
         </Button>
       </Space>
+
+      {locked ? (
+        <Alert
+          type="success"
+          showIcon
+          icon={<LockOutlined />}
+          message={`第 ${round} 期已交验并锁定，样木录入页只可查看。如需补测请先撤销交验并填写原因。`}
+        />
+      ) : inspection?.openIssues.length ? (
+        <Alert
+          type="warning"
+          showIcon
+          message={`第 ${round} 期待交验：扫描出 ${inspection.issues.length} 条问题，其中 ${inspection.openIssues.length} 条未写处理说明，问题清零才能交验通过。`}
+        />
+      ) : null}
 
       <Card size="small">
         <Space wrap size={12}>
@@ -174,7 +195,16 @@ export default function TreeEntry() {
 
       <Row gutter={12}>
         <Col span={12}>
-          <Card size="small" title={`第 ${round} 期快速录入`}>
+          <Card
+            size="small"
+            title={`第 ${round} 期快速录入`}
+            extra={
+              locked ? <Tag color="green" icon={<LockOutlined />}>只读</Tag> : null
+            }
+          >
+            {locked ? (
+              <Alert type="info" showIcon message="本期已交验锁定，不能新增样木；请先撤销交验后再补录。" />
+            ) : (
             <Space wrap size={8}>
               <Input
                 style={{ width: 110 }}
@@ -272,6 +302,7 @@ export default function TreeEntry() {
                 录入样木
               </Button>
             </Space>
+            )}
             <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
               当前待录径阶：{diameterClassLabel(form.dbhCm)} cm（按「6/8/12/16/20/24/28/32+」径阶自动归组）
             </Typography.Paragraph>
@@ -312,14 +343,21 @@ export default function TreeEntry() {
         </Col>
       </Row>
 
-      <Card size="small" title={`第 ${round} 期样木清单（${rows.length} 株，可点胸径单元格直接修改）`}>
+      <Card
+        size="small"
+        title={`第 ${round} 期样木清单（${rows.length} 株${locked ? '，已锁定只读' : '，可点胸径单元格直接修改'}）`}
+      >
         <TreeTable
           items={rows}
           peers={peers}
-          onDbhChange={async (treeId, dbhCm) => {
-            await updateTree(treeId, { dbhCm });
-            setToast('胸径已更新，径阶与断面积同步重算');
-          }}
+          onDbhChange={
+            locked
+              ? undefined
+              : async (treeId, dbhCm) => {
+                  await updateTree(treeId, { dbhCm });
+                  setToast('胸径已更新，径阶与断面积同步重算');
+                }
+          }
         />
       </Card>
     </Space>

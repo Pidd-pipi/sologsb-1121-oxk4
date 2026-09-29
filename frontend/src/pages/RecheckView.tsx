@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Alert, Button, Card, Col, Row, Select, Space, Statistic, Tag, Typography } from 'antd';
-import { SaveOutlined } from '@ant-design/icons';
+import { SaveOutlined, LockOutlined } from '@ant-design/icons';
 import { usePlotStore } from '../stores/plotStore';
 import { useTreeStore } from '../stores/treeStore';
+import { useRecheckStore } from '../stores/recheckStore';
 import GrowthDiffTable from '../components/common/GrowthDiffTable';
 import RoundTag from '../components/common/RoundTag';
-import { loadRecheckDiffs, saveRecheckDiffs } from '../utils/db';
+import InspectionActions from '../components/inspection/InspectionActions';
+import { useInspection } from '../hooks/useInspection';
 import { newId } from '../utils/id';
 import { growthRate, isDiffAbnormal, type RecheckDiff } from '../types/recheck';
 import type { TreeRecord } from '../types/tree';
@@ -20,6 +22,9 @@ export default function RecheckView() {
   const { id = '' } = useParams();
   const plot = usePlotStore((s) => s.items.find((p) => p.id === id));
   const trees = useTreeStore((s) => s.items);
+  const savedDiffs = useRecheckStore((s) => s.items);
+  const saveRound = useRecheckStore((s) => s.saveRound);
+  const updateOne = useRecheckStore((s) => s.updateOne);
 
   const rounds = useMemo(
     () => Array.from(new Set(trees.filter((t) => t.plotId === id).map((t) => t.round))).sort((a, b) => a - b),
@@ -32,6 +37,9 @@ export default function RecheckView() {
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
 
+  const inspection = useInspection(id, targetRound);
+  const locked = inspection?.status === '已交验';
+
   useEffect(() => {
     if (rounds.length >= 2) {
       setBaseRound(rounds[rounds.length - 2]);
@@ -39,12 +47,19 @@ export default function RecheckView() {
     }
   }, [rounds.join(',')]);
 
+  // 已保存的该上下期比对结果自动载入（已保存行被修改时不覆盖未保存的内存表）
   useEffect(() => {
-    if (!id) return;
-    void loadRecheckDiffs(id).then((rows) => {
-      if (rows.length > 0) setDiffs(rows);
+    const rows = savedDiffs
+      .filter((d) => d.plotId === id && d.baseRound === baseRound && d.targetRound === targetRound)
+      .sort((a, b) => a.treeNo.localeCompare(b.treeNo, 'zh-Hans-CN', { numeric: true }));
+    setDiffs((prev) => {
+      if (prev.length > 0 && rows.length > 0) {
+        const touched = new Set(prev.map((d) => d.id));
+        if (rows.every((d) => touched.has(d.id))) return prev;
+      }
+      return rows;
     });
-  }, [id]);
+  }, [id, savedDiffs, baseRound, targetRound]);
 
   useEffect(() => {
     if (!toast) return;
@@ -53,6 +68,7 @@ export default function RecheckView() {
   }, [toast]);
 
   const generate = () => {
+    if (locked) return;
     if (baseRound === targetRound) {
       setError('上期与本期不能是同一期次');
       return;
@@ -77,7 +93,8 @@ export default function RecheckView() {
       const heightGrowth =
         b && t ? r2(t.heightM - b.heightM) : 0;
       const statusChange = b && t && b.status !== t.status ? `${b.status} → ${t.status}` : '';
-      const missingReason = !t ? '本期未复测（疑似采伐或倒伏）' : !b ? '本期新增进界木' : '';
+      // 缺测原因须由调查员补写：仅上期已采伐木自动标注，其余缺测/进界留空（留空即交验问题）
+      const missingReason = !t && b?.status === '采伐' ? '上期已采伐，本期无此木' : '';
       return {
         id: newId('diff'),
         plotId: id,
@@ -99,20 +116,24 @@ export default function RecheckView() {
 
     setDiffs(next);
     setError('');
-    setToast(`已生成第 ${baseRound} 期 → 第 ${targetRound} 期的逐株比对表，共 ${next.length} 条`);
+    setToast(`已生成第 ${baseRound} 期 → 第 ${targetRound} 期的逐株比对表，共 ${next.length} 条；缺测行请补写原因`);
   };
 
   const save = async () => {
+    if (locked) return;
     if (diffs.length === 0) {
       setError('请先生成比对表');
       return;
     }
-    await saveRecheckDiffs(diffs);
+    await saveRound(id, baseRound, targetRound, diffs);
     setToast(`逐株比对表已写入本地档案库（${diffs.length} 条）`);
   };
 
   const abnormal = diffs.filter(isDiffAbnormal).length;
-  const missing = diffs.filter((d) => !d.targetDbhCm).length;
+  const missing = diffs.filter((d) => !d.targetDbhCm || !d.baseDbhCm).length;
+  const missingNoReason = diffs.filter(
+    (d) => (d.targetDbhCm === undefined || d.baseDbhCm === undefined) && !d.missingReason.trim(),
+  ).length;
   const avgRate =
     diffs.filter((d) => d.targetDbhCm).length === 0
       ? 0
@@ -136,8 +157,9 @@ export default function RecheckView() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           复查比对 · {plot.plotNo}
         </Typography.Title>
-        <RoundTag round={plot.surveyRound} locked={plot.locked} />
+        <RoundTag round={targetRound} status={inspection?.status} />
         <Tag>样地面积 {plot.area} m²</Tag>
+        {inspection ? <InspectionActions plotId={plot.id} round={targetRound} /> : null}
         <div style={{ flex: 1 }} />
         <Button type="link">
           <Link to={`/plots/${plot.id}/trees`}>样木录入</Link>
@@ -153,6 +175,21 @@ export default function RecheckView() {
       {toast ? <Alert type="success" showIcon message={toast} closable onClose={() => setToast('')} /> : null}
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError('')} /> : null}
 
+      {locked ? (
+        <Alert
+          type="success"
+          showIcon
+          icon={<LockOutlined />}
+          message={`第 ${targetRound} 期已交验并锁定，复查比对只可查看。如需补测请先撤销交验并填写原因。`}
+        />
+      ) : (
+        <Alert
+          type="info"
+          showIcon
+          message="缺测行必须补写复查原因（输入框提供常用原因候选），保存后交验扫描才会认可；负增长、重度啃食等请在交验单中逐条写处理说明。"
+        />
+      )}
+
       <Card size="small">
         <Space wrap size={10}>
           <span>
@@ -161,6 +198,7 @@ export default function RecheckView() {
               style={{ width: 120, marginLeft: 6 }}
               value={baseRound}
               onChange={setBaseRound}
+              disabled={locked}
               options={rounds.map((r) => ({ value: r, label: `第 ${r} 期` }))}
             />
           </span>
@@ -173,10 +211,10 @@ export default function RecheckView() {
               options={rounds.map((r) => ({ value: r, label: `第 ${r} 期` }))}
             />
           </span>
-          <Button type="primary" onClick={generate}>
+          <Button type="primary" onClick={generate} disabled={locked}>
             生成逐株比对表
           </Button>
-          <Button icon={<SaveOutlined />} onClick={save}>
+          <Button icon={<SaveOutlined />} onClick={save} disabled={locked}>
             保存比对结果
           </Button>
           <Typography.Text type="secondary">
@@ -203,13 +241,34 @@ export default function RecheckView() {
         </Col>
         <Col span={6}>
           <Card size="small">
-            <Statistic title="异常标注" value={abnormal} suffix="条" />
+            <Statistic
+              title="交验相关问题"
+              value={abnormal + missingNoReason}
+              suffix={`条（其中缺测未写原因 ${missingNoReason}）`}
+            />
           </Card>
         </Col>
       </Row>
 
       <Card size="small" title="两期逐株差值表">
-        <GrowthDiffTable diffs={diffs} />
+        <GrowthDiffTable
+          diffs={diffs}
+          readOnly={locked}
+          onReasonChange={
+            locked
+              ? undefined
+              : (diffId, reason) => {
+                  setDiffs((prev) => prev.map((d) => (d.id === diffId ? { ...d, missingReason: reason } : d)));
+                  const saved = savedDiffs.find((d) => d.id === diffId);
+                  if (saved) void updateOne(diffId, { missingReason: reason });
+                }
+          }
+        />
+        {!locked && diffs.length > 0 ? (
+          <Typography.Paragraph type="secondary" style={{ marginTop: 8, marginBottom: 0 }}>
+            补写缺测原因后请点「保存比对结果」；已保存的行也会即时写入档案库。
+          </Typography.Paragraph>
+        ) : null}
       </Card>
     </Space>
   );

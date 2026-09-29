@@ -19,8 +19,12 @@ import { usePlotStore } from '../stores/plotStore';
 import { useRegenStore } from '../stores/regenStore';
 import { useTreeStore } from '../stores/treeStore';
 import { useTreeStats } from '../hooks/useTreeStats';
+import { useInspection } from '../hooks/useInspection';
 import RoundTag from '../components/common/RoundTag';
 import PlotCard from '../components/common/PlotCard';
+import InspectionStatusTag from '../components/inspection/InspectionStatusTag';
+import InspectionActions from '../components/inspection/InspectionActions';
+import { ISSUE_KIND_COLOR, ISSUE_KIND_LABEL } from '../types/inspection';
 import { canopyFromCrown, formHeight, heightClassStats } from '../utils/forestCalc';
 import type { TreeRecord } from '../types/tree';
 
@@ -41,6 +45,7 @@ export default function PlotSummary() {
   const trees = useTreeStore((s) => s.items);
   const regens = useRegenStore((s) => s.items);
   const stats = useTreeStats(plotId);
+  const inspection = useInspection(plotId, plot?.surveyRound ?? 1);
 
   const [toast, setToast] = useState('');
 
@@ -99,6 +104,9 @@ export default function PlotSummary() {
     lines.push(`林型：${plot.forestType}；优势树种：${plot.dominantSpecies}`);
     lines.push(`复查期次：第 ${plot.surveyRound} 期；调查时间：${new Date(plot.surveyedAt).toLocaleDateString('zh-CN')}`);
     lines.push(`调查组：${plot.crew}`);
+    lines.push(
+      `交验状态：${inspection?.status ?? '待交验'}；交验问题 ${inspection?.issues.length ?? 0} 条，待处理 ${inspection?.openIssues.length ?? 0} 条`,
+    );
     lines.push('');
     lines.push(`每公顷株数：${stats.perHa} 株/hm²`);
     lines.push(`平均胸径：${stats.meanDbh} cm`);
@@ -117,7 +125,7 @@ export default function PlotSummary() {
     lines.push('');
     lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
     return lines.join('\n');
-  }, [plot, stats, plotRegens, speciesRows]);
+  }, [plot, stats, plotRegens, speciesRows, inspection]);
 
   if (!plot) {
     return (
@@ -134,8 +142,12 @@ export default function PlotSummary() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           林分因子汇总 · {plot.plotNo}
         </Typography.Title>
-        <RoundTag round={plot.surveyRound} locked={plot.locked} />
+        <RoundTag round={plot.surveyRound} status={inspection?.status} />
         <Tag color="green">{plot.forestType}</Tag>
+        {inspection ? (
+          <InspectionStatusTag status={inspection.status} openCount={inspection.openIssues.length} />
+        ) : null}
+        {inspection ? <InspectionActions plotId={plot.id} round={plot.surveyRound} size="middle" /> : null}
         <div style={{ flex: 1 }} />
         <Button type="link">
           <Link to={`/plots/${plot.id}/trees`}>样木录入</Link>
@@ -152,7 +164,27 @@ export default function PlotSummary() {
 
       <Row gutter={12}>
         <Col span={8}>
-          <PlotCard plot={plot} treeCount={stats.count} />
+          <PlotCard
+            plot={plot}
+            treeCount={stats.count}
+            inspection={
+              inspection
+                ? {
+                    status: inspection.status,
+                    openCount: inspection.openIssues.length,
+                    issueCount: inspection.issues.length,
+                  }
+                : undefined
+            }
+          />
+          {inspection?.status === '需补测' && inspection.revokeReason ? (
+            <Alert
+              style={{ marginTop: 10 }}
+              type="warning"
+              showIcon
+              message={`需补测原因：${inspection.revokeReason}`}
+            />
+          ) : null}
         </Col>
         <Col span={16}>
           <Row gutter={[12, 12]}>
@@ -199,6 +231,43 @@ export default function PlotSummary() {
           </Row>
         </Col>
       </Row>
+
+      <Card
+        size="small"
+        title={`本期交验问题（共 ${inspection?.issues.length ?? 0} 条，待处理 ${inspection?.openIssues.length ?? 0} 条）`}
+        extra={
+          inspection ? <InspectionStatusTag status={inspection.status} openCount={inspection.openIssues.length} /> : null
+        }
+      >
+        {inspection && inspection.issues.length > 0 ? (
+          <Table
+            rowKey="key"
+            size="small"
+            pagination={false}
+            dataSource={inspection.issues}
+            columns={[
+              {
+                title: '类别',
+                dataIndex: 'kind',
+                width: 130,
+                render: (kind: keyof typeof ISSUE_KIND_LABEL) => (
+                  <Tag color={ISSUE_KIND_COLOR[kind]}>{ISSUE_KIND_LABEL[kind]}</Tag>
+                ),
+              },
+              { title: '问题对象', dataIndex: 'subject', width: 220 },
+              { title: '问题描述', dataIndex: 'message' },
+              {
+                title: '处理状态',
+                width: 110,
+                render: (_: unknown, row: { key: string }) =>
+                  inspection.notes[row.key]?.trim() ? <Tag color="green">已写说明</Tag> : <Tag color="red">待处理</Tag>,
+              },
+            ]}
+          />
+        ) : (
+          <Typography.Text type="secondary">本期无胸径异常、负增长、缺测未写原因、重度啃食问题。</Typography.Text>
+        )}
+      </Card>
 
       <Card size="small" title="径阶分布与高度级">
         <Space direction="vertical" size={6}>

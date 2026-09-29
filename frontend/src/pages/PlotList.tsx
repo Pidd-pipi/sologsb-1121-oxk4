@@ -23,7 +23,9 @@ import { usePlotStore } from '../stores/plotStore';
 import { useTreeStore } from '../stores/treeStore';
 import { useRegenStore } from '../stores/regenStore';
 import { usePlotFilter } from '../hooks/usePlotFilter';
+import { usePlotInspectionMap } from '../hooks/useInspection';
 import PlotCard from '../components/common/PlotCard';
+import InspectionActions from '../components/inspection/InspectionActions';
 import { FOREST_TYPES, PLOT_SHAPES, type PlotDraft, type PlotShape } from '../types/plot';
 
 const EMPTY: PlotDraft = {
@@ -50,10 +52,10 @@ export default function PlotList() {
   const navigate = useNavigate();
   const plots = usePlotStore((s) => s.items);
   const addPlot = usePlotStore((s) => s.add);
-  const toggleLock = usePlotStore((s) => s.toggleLock);
   const trees = useTreeStore((s) => s.items);
   const regens = useRegenStore((s) => s.items);
   const { filters, patch, reset, result, options } = usePlotFilter();
+  const inspectionMap = usePlotInspectionMap();
 
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<PlotDraft>(EMPTY);
@@ -71,6 +73,17 @@ export default function PlotList() {
     if (plots.length === 0) return 0;
     return Math.round((plots.reduce((s, p) => s + p.canopyDensity, 0) / plots.length) * 100) / 100;
   }, [plots]);
+
+  const inspectionStats = useMemo(() => {
+    const acc = { 待交验: 0, 需补测: 0, 已交验: 0, openIssues: 0 };
+    plots.forEach((p) => {
+      const summary = inspectionMap.get(p.id);
+      if (!summary) return;
+      acc[summary.status] += 1;
+      acc.openIssues += summary.openCount;
+    });
+    return acc;
+  }, [plots, inspectionMap]);
 
   const submit = async () => {
     if (!draft.plotNo.trim()) {
@@ -127,6 +140,28 @@ export default function PlotList() {
         <Col span={6}>
           <Card size="small">
             <Statistic title="平均郁闭度" value={avgCanopy} precision={2} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={12}>
+        <Col span={8}>
+          <Card size="small">
+            <Statistic
+              title={<span style={{ color: '#d48806' }}>待交验</span>}
+              value={inspectionStats.待交验}
+              suffix={`个 · 待处理 ${inspectionStats.openIssues} 条`}
+            />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card size="small">
+            <Statistic title={<span style={{ color: '#cf1322' }}>需补测</span>} value={inspectionStats.需补测} suffix="个" />
+          </Card>
+        </Col>
+        <Col span={8}>
+          <Card size="small">
+            <Statistic title={<span style={{ color: '#389e0d' }}>已交验（本期已锁定）</span>} value={inspectionStats.已交验} suffix="个" />
           </Card>
         </Col>
       </Row>
@@ -202,6 +237,7 @@ export default function PlotList() {
               <PlotCard
                 plot={plot}
                 treeCount={trees.filter((t) => t.plotId === plot.id && t.round === plot.surveyRound).length}
+                inspection={inspectionMap.get(plot.id)}
                 footer={
                   <Space wrap size={4}>
                     <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/trees`)}>
@@ -216,9 +252,7 @@ export default function PlotList() {
                     <Button size="small" type="link" onClick={() => navigate(`/summary/${plot.id}`)}>
                       林分汇总
                     </Button>
-                    <Button size="small" danger={!plot.locked} onClick={() => toggleLock(plot.id)}>
-                      {plot.locked ? '解锁往期' : '锁定往期'}
-                    </Button>
+                    <InspectionActions plotId={plot.id} round={plot.surveyRound} />
                   </Space>
                 }
               />

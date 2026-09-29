@@ -3,17 +3,24 @@ import type { Plot } from '../types/plot';
 import type { TreeRecord } from '../types/tree';
 import type { RegenShrub } from '../types/regen';
 import type { RecheckDiff } from '../types/recheck';
+import type { Inspection } from '../types/inspection';
 import { newId } from './id';
 
 export const DB_NAME = 'gbforestplot';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 export const LS_VERSION_KEY = 'gbforestplot:db-version';
+
+/** 交验记录主键（每期一条） */
+export function inspectionId(plotId: string, round: number): string {
+  return `insp_${plotId}_r${round}`;
+}
 
 class ForestPlotDB extends Dexie {
   plots!: Table<Plot, string>;
   trees!: Table<TreeRecord, string>;
   regens!: Table<RegenShrub, string>;
   rechecks!: Table<RecheckDiff, string>;
+  inspections!: Table<Inspection, string>;
 
   constructor() {
     super(DB_NAME);
@@ -45,6 +52,28 @@ class ForestPlotDB extends Dexie {
             if (row.round === undefined) row.round = 1;
             if (row.measuredAt === undefined) row.measuredAt = Date.now();
           });
+      });
+    this.version(3)
+      .stores({
+        plots: 'id, plotNo, locality, forestType, surveyRound, locked, createdAt',
+        trees: 'id, plotId, treeNo, species, round, status, measuredAt',
+        regens: 'id, plotId, layer, species, round, heightCm',
+        rechecks: 'id, plotId, baseRound, targetRound, treeNo, generatedAt',
+        inspections: 'id, plotId, round, status',
+      })
+      .upgrade(async (tx) => {
+        // 老样地沿用往期锁定：已锁定的样地补一条「已交验」记录，其余默认待交验
+        const plots = await tx.table('plots').toCollection().toArray();
+        const records: Inspection[] = (plots as Plot[]).map((plot) => ({
+          id: inspectionId(plot.id, plot.surveyRound),
+          plotId: plot.id,
+          round: plot.surveyRound,
+          status: plot.locked ? '已交验' : '待交验',
+          notes: {},
+          revokeReason: '',
+          submittedAt: plot.locked ? Date.now() : undefined,
+        }));
+        await tx.table('inspections').bulkPut(records);
       });
   }
 }
@@ -122,7 +151,7 @@ export async function ensureSeedData(): Promise<void> {
       forestType: '阔叶林',
       canopyDensity: 0.65,
       dominantSpecies: '蒙古栎',
-      surveyRound: 1,
+      surveyRound: 2,
       surveyedAt: now - 3 * day,
       crew: '调查二组（周砚）',
       locked: false,
@@ -199,22 +228,57 @@ export async function ensureSeedData(): Promise<void> {
     round: 2,
     measuredAt: now - 6 * day,
   });
-  trees.push({
-    id: newId('tree'),
-    plotId: plot2Id,
-    treeNo: '1',
-    species: '蒙古栎',
-    dbhCm: 22.4,
-    heightM: 13.2,
-    underBranchH: 4.2,
-    crownWidth: 4.1,
-    status: '活立木',
-    origin: '天然',
-    healthClass: '亚健康',
-    tiltDeg: 6,
-    remark: '样地西侧',
-    round: 1,
-    measuredAt: now - 3 * day,
+  // 示范样地 2 两期样木：第 2 期含负增长、缺测未写原因、进界木胸径异常等交验问题
+  const plot2Round1: Array<[string, string, number, number]> = [
+    ['1', '蒙古栎', 22.4, 13.2],
+    ['2', '蒙古栎', 20.1, 11.8],
+    ['3', '黑桦', 16.8, 10.2],
+    ['4', '色木槭', 10.5, 8.0],
+  ];
+  plot2Round1.forEach(([treeNo, species, dbh, h]) => {
+    trees.push({
+      id: newId('tree'),
+      plotId: plot2Id,
+      treeNo,
+      species,
+      dbhCm: dbh,
+      heightM: h,
+      underBranchH: Math.round(h * 0.32 * 10) / 10,
+      crownWidth: Math.round(dbh * 0.18 * 10) / 10,
+      status: '活立木',
+      origin: '天然',
+      healthClass: '健康',
+      tiltDeg: 3,
+      remark: '样地西侧',
+      round: 1,
+      measuredAt: now - 110 * day,
+    });
+  });
+  // 第 2 期：树号 1 胸径负增长、树号 2 树高负增长、树号 4 缺测（未写原因）、树号 5 进界但胸径异常
+  const plot2Round2: Array<[string, string, number, number]> = [
+    ['1', '蒙古栎', 21.6, 13.6],
+    ['2', '蒙古栎', 20.9, 11.2],
+    ['3', '黑桦', 17.6, 10.8],
+    ['5', '蒙古栎', 50.0, 16.5],
+  ];
+  plot2Round2.forEach(([treeNo, species, dbh, h]) => {
+    trees.push({
+      id: newId('tree'),
+      plotId: plot2Id,
+      treeNo,
+      species,
+      dbhCm: dbh,
+      heightM: h,
+      underBranchH: Math.round(h * 0.32 * 10) / 10,
+      crownWidth: Math.round(dbh * 0.18 * 10) / 10,
+      status: '活立木',
+      origin: '天然',
+      healthClass: '健康',
+      tiltDeg: 3,
+      remark: treeNo === '5' ? '样地北缘补测进界木' : '样地西侧',
+      round: 2,
+      measuredAt: now - 3 * day,
+    });
   });
 
   const regens: RegenShrub[] = [
@@ -266,11 +330,56 @@ export async function ensureSeedData(): Promise<void> {
       browseDamage: '无',
       round: 2,
     },
+    {
+      id: newId('regen'),
+      plotId: plot2Id,
+      layer: '更新苗',
+      species: '水曲柳',
+      heightCm: 26,
+      count: 12,
+      ageGroup: '2 年生',
+      distribution: '团状',
+      browseDamage: '重度',
+      round: 2,
+    },
+    {
+      id: newId('regen'),
+      plotId: plot2Id,
+      layer: '灌木',
+      species: '胡枝子',
+      heightCm: 80,
+      count: 30,
+      ageGroup: '多年生',
+      distribution: '均匀',
+      browseDamage: '轻度',
+      round: 2,
+    },
   ];
 
-  await db.transaction('rw', db.plots, db.trees, db.regens, db.rechecks, async () => {
+  const inspections: Inspection[] = [
+    {
+      id: inspectionId(plotId, 2),
+      plotId,
+      round: 2,
+      status: '已交验',
+      notes: {},
+      revokeReason: '',
+      submittedAt: now - 5 * day,
+    },
+    {
+      id: inspectionId(plot2Id, 2),
+      plotId: plot2Id,
+      round: 2,
+      status: '待交验',
+      notes: {},
+      revokeReason: '',
+    },
+  ];
+
+  await db.transaction('rw', db.plots, db.trees, db.regens, db.rechecks, db.inspections, async () => {
     await db.plots.bulkPut(plots);
     await db.trees.bulkPut(trees);
     await db.regens.bulkPut(regens);
+    await db.inspections.bulkPut(inspections);
   });
 }

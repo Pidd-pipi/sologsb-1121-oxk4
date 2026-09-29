@@ -58,12 +58,13 @@ sologsb-1121/
         ├── main.tsx
         ├── index.css
         ├── router/index.tsx
-        ├── types/{plot,tree,regen,recheck}.ts
-        ├── stores/{plot,tree,regen}Store.ts
+        ├── types/{plot,tree,regen,recheck,inspection}.ts
+        ├── stores/{plot,tree,regen,recheck,inspection}Store.ts
         ├── components/common/{PlotCard,TreeTable,GrowthDiffTable,RoundTag}.tsx
-        ├── hooks/{usePlotFilter,useTreeStats}.ts
+        ├── components/inspection/{InspectionActions,InspectionStatusTag}.tsx
+        ├── hooks/{usePlotFilter,useTreeStats,useInspection}.ts
         ├── pages/{PlotList,TreeEntry,RegenView,RecheckView,PlotSummary}.tsx
-        └── utils/{db,forestCalc,id}.ts
+        └── utils/{db,forestCalc,inspection,id}.ts
 ```
 
 ## 页面与路由
@@ -80,11 +81,22 @@ sologsb-1121/
 
 ## 数据存储说明
 
-- 数据库名 `gbforestplot`，当前结构版本 **v2**（`localStorage['gbforestplot:db-version']` 记录）。
-- 四张表：`plots`（样地）、`trees`（样木，按期次分行）、`regens`（更新苗与灌木样方）、`rechecks`（复查逐株比对）。
+- 数据库名 `gbforestplot`，当前结构版本 **v3**（`localStorage['gbforestplot:db-version']` 记录）。
+- 五张表：`plots`（样地）、`trees`（样木，按期次分行）、`regens`（更新苗与灌木样方）、`rechecks`（复查逐株比对）、`inspections`（按期次的交验记录）。
 - v1 → v2 迁移：为老样地补 `locked`、`surveyRound`，为老样木补 `round`、`measuredAt`，并新增索引。
+- v2 → v3 迁移：新增 `inspections` 表；老样地按 `locked` 补一条「已交验」或「待交验」记录。
 - 容器无状态、不挂载命名卷；清空站点数据即回到初始示范数据。
-- 首次打开灌入 2 个示范样地、11 条样木（含第 1/2 两期，便于直接做复查比对）与 4 条样方记录。
+- 首次打开灌入 2 个示范样地（FP-4102 第 2 期已交验锁定；FP-4115 第 2 期待交验，含胸径异常、负增长、缺测未写原因、重度啃食四类问题）、两期样木与 6 条样方记录。
+
+## 交验流程
+
+调查组在样木录入、更新与灌木、复查比对任一页点「交验」：
+
+1. **扫描问题**：提交时按四类列出本期问题 —— 胸径异常、负增长（胸径/树高）、本期缺测未写原因、更新层重度啃食；缺测原因也可先在复查比对页逐行补写。
+2. **逐条处理**：调查员在交验单内为每条问题写处理说明（可暂存）；改正数据后问题自动消失。**问题清零前不能交验**。
+3. **交验通过即锁定该期数据**：样木、更新层、复查三个录入页变为只读。
+4. **补测先撤销**：已交验状态点「撤销交验（补测）」必须填写原因，状态转为「需补测」、本期解锁；补测完成后重新交验。
+5. **状态可见**：台账卡片、各录入页与林分汇总页均显示「待交验 / 需补测 / 已交验」状态与未清零问题数。
 
 ## 功能要点
 
