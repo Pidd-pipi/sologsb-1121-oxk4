@@ -19,9 +19,13 @@ import { usePlotStore } from '../stores/plotStore';
 import { useRegenStore } from '../stores/regenStore';
 import { useTreeStore } from '../stores/treeStore';
 import { useTreeStats } from '../hooks/useTreeStats';
+import { useRoundReview } from '../hooks/useRoundReview';
 import RoundTag from '../components/common/RoundTag';
 import PlotCard from '../components/common/PlotCard';
+import RoundSubmissionBar from '../components/review/RoundSubmissionBar';
+import SubmissionStatusTag from '../components/review/SubmissionStatusTag';
 import { canopyFromCrown, formHeight, heightClassStats } from '../utils/forestCalc';
+import { SUBMISSION_STATUS_LABEL } from '../types/submission';
 import type { TreeRecord } from '../types/tree';
 
 type Columns = NonNullable<TableProps<TreeRecord>['columns']>;
@@ -41,6 +45,7 @@ export default function PlotSummary() {
   const trees = useTreeStore((s) => s.items);
   const regens = useRegenStore((s) => s.items);
   const stats = useTreeStats(plotId);
+  const review = useRoundReview(plotId, plot?.surveyRound ?? 1);
 
   const [toast, setToast] = useState('');
 
@@ -99,6 +104,14 @@ export default function PlotSummary() {
     lines.push(`林型：${plot.forestType}；优势树种：${plot.dominantSpecies}`);
     lines.push(`复查期次：第 ${plot.surveyRound} 期；调查时间：${new Date(plot.surveyedAt).toLocaleDateString('zh-CN')}`);
     lines.push(`调查组：${plot.crew}`);
+    lines.push(
+      `交验状态：${SUBMISSION_STATUS_LABEL[review.status]}` +
+        (review.status === 'submitted'
+          ? `（${new Date(
+              [...(review.submission?.events ?? [])].reverse().find((e) => e.type === 'pass')?.at ?? plot.surveyedAt,
+            ).toLocaleDateString('zh-CN')} 交验锁定）`
+          : `（待处理问题 ${review.issueCount} 条）`),
+    );
     lines.push('');
     lines.push(`每公顷株数：${stats.perHa} 株/hm²`);
     lines.push(`平均胸径：${stats.meanDbh} cm`);
@@ -117,7 +130,7 @@ export default function PlotSummary() {
     lines.push('');
     lines.push(`导出时间：${new Date().toLocaleString('zh-CN')}`);
     return lines.join('\n');
-  }, [plot, stats, plotRegens, speciesRows]);
+  }, [plot, stats, plotRegens, speciesRows, review.status, review.issueCount, review.submission]);
 
   if (!plot) {
     return (
@@ -134,7 +147,12 @@ export default function PlotSummary() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           林分因子汇总 · {plot.plotNo}
         </Typography.Title>
-        <RoundTag round={plot.surveyRound} locked={plot.locked} />
+        <RoundTag round={plot.surveyRound} />
+        <SubmissionStatusTag
+          status={review.status}
+          issueCount={review.issueCount}
+          unresolvedCount={review.unresolvedCount}
+        />
         <Tag color="green">{plot.forestType}</Tag>
         <div style={{ flex: 1 }} />
         <Button type="link">
@@ -148,11 +166,23 @@ export default function PlotSummary() {
         </Button>
       </Space>
 
+      <RoundSubmissionBar plotId={plot.id} round={plot.surveyRound} pageName="林分汇总页（只读）" />
+
       {toast ? <Alert type="success" showIcon message={toast} closable onClose={() => setToast('')} /> : null}
 
       <Row gutter={12}>
         <Col span={8}>
-          <PlotCard plot={plot} treeCount={stats.count} />
+          <PlotCard
+            plot={plot}
+            treeCount={stats.count}
+            statusTag={
+              <SubmissionStatusTag
+                status={review.status}
+                issueCount={review.issueCount}
+                unresolvedCount={review.unresolvedCount}
+              />
+            }
+          />
         </Col>
         <Col span={16}>
           <Row gutter={[12, 12]}>

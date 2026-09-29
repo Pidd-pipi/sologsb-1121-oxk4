@@ -19,7 +19,11 @@ import {
 import { PlusOutlined } from '@ant-design/icons';
 import { usePlotStore } from '../stores/plotStore';
 import { useRegenStore } from '../stores/regenStore';
+import { useTreeStore } from '../stores/treeStore';
+import { useRoundReview } from '../hooks/useRoundReview';
 import RoundTag from '../components/common/RoundTag';
+import RoundSubmissionBar from '../components/review/RoundSubmissionBar';
+import SubmissionStatusTag from '../components/review/SubmissionStatusTag';
 import {
   AGE_GROUPS,
   BROWSE_DAMAGES,
@@ -31,8 +35,7 @@ import {
   type RegenShrub,
   type RegenShrubDraft,
 } from '../types/regen';
-import { heightClassStats } from '../utils/forestCalc';
-import { perHectareCount } from '../utils/forestCalc';
+import { heightClassStats, perHectareCount } from '../utils/forestCalc';
 
 type Columns = NonNullable<TableProps<RegenShrub>['columns']>;
 
@@ -41,12 +44,34 @@ export default function RegenView() {
   const { id = '' } = useParams();
   const plot = usePlotStore((s) => s.items.find((p) => p.id === id));
   const regens = useRegenStore((s) => s.items);
+  const trees = useTreeStore((s) => s.items);
   const addRegen = useRegenStore((s) => s.add);
   const removeRegen = useRegenStore((s) => s.remove);
 
+  const rounds = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...regens.filter((r) => r.plotId === id).map((r) => r.round),
+          ...trees.filter((t) => t.plotId === id).map((t) => t.round),
+        ]),
+      ).sort((a, b) => a - b),
+    [regens, trees, id],
+  );
+  const [round, setRound] = useState(plot?.surveyRound ?? 1);
+  useEffect(() => {
+    if (plot) setRound(plot.surveyRound);
+  }, [plot?.id]);
+
+  const review = useRoundReview(id, round);
+  const locked = review.locked;
+
   const rows = useMemo(
-    () => regens.filter((r) => r.plotId === id).sort((a, b) => a.layer.localeCompare(b.layer) || b.heightCm - a.heightCm),
-    [regens, id],
+    () =>
+      regens
+        .filter((r) => r.plotId === id && r.round === round)
+        .sort((a, b) => a.layer.localeCompare(b.layer) || b.heightCm - a.heightCm),
+    [regens, id, round],
   );
 
   const [layerFilter, setLayerFilter] = useState<RegenLayer | 'all'>('all');
@@ -59,14 +84,14 @@ export default function RegenView() {
     ageGroup: '2 年生',
     distribution: '均匀',
     browseDamage: '无',
-    round: plot?.surveyRound ?? 1,
+    round: round,
   });
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
 
   useEffect(() => {
-    setForm((prev) => ({ ...prev, plotId: id, round: plot?.surveyRound ?? 1 }));
-  }, [id, plot?.surveyRound]);
+    setForm((prev) => ({ ...prev, plotId: id, round }));
+  }, [id, round]);
 
   useEffect(() => {
     if (!toast) return;
@@ -99,7 +124,11 @@ export default function RegenView() {
       title: '啃食情况',
       dataIndex: 'browseDamage',
       width: 110,
-      render: (v: string) => <Tag color={v === '无' ? 'green' : v === '重度' ? 'red' : 'orange'}>{v}</Tag>,
+      render: (v: string) => (
+        <Tag color={v === '无' ? 'green' : v === '重度' ? 'red' : 'orange'} data-testid={`browse-${v}`}>
+          {v}
+        </Tag>
+      ),
     },
     {
       title: '期次',
@@ -107,15 +136,19 @@ export default function RegenView() {
       width: 90,
       render: (v: number) => `第 ${v} 期`,
     },
-    {
-      title: '操作',
-      width: 90,
-      render: (_: unknown, row: RegenShrub) => (
-        <Button size="small" danger onClick={() => removeRegen(row.id)}>
-          删除
-        </Button>
-      ),
-    },
+    ...(locked
+      ? []
+      : [
+          {
+            title: '操作',
+            width: 90,
+            render: (_: unknown, row: RegenShrub) => (
+              <Button size="small" danger onClick={() => removeRegen(row.id)}>
+                删除
+              </Button>
+            ),
+          } as NonNullable<Columns>[number],
+        ]),
   ];
 
   if (!plot) {
@@ -133,7 +166,12 @@ export default function RegenView() {
         <Typography.Title level={4} style={{ margin: 0 }}>
           更新苗与灌木层 · {plot.plotNo}
         </Typography.Title>
-        <RoundTag round={plot.surveyRound} locked={plot.locked} />
+        <RoundTag round={round} />
+        <SubmissionStatusTag
+          status={review.status}
+          issueCount={review.issueCount}
+          unresolvedCount={review.unresolvedCount}
+        />
         <Tag>样地面积 {plot.area} m²</Tag>
         <div style={{ flex: 1 }} />
         <Button type="link">
@@ -147,79 +185,98 @@ export default function RegenView() {
         </Button>
       </Space>
 
+      <RoundSubmissionBar plotId={plot.id} round={round} pageName="更新层页" />
+
+      <Card size="small">
+        <Space wrap size={12}>
+          <span>
+            查看期次
+            <Select
+              style={{ width: 130, marginLeft: 6 }}
+              value={round}
+              onChange={setRound}
+              options={(rounds.length ? rounds : [plot.surveyRound]).map((r) => ({ value: r, label: `第 ${r} 期` }))}
+            />
+          </span>
+          <Typography.Text type="secondary">第 {round} 期样方记录 {rows.length} 条</Typography.Text>
+        </Space>
+      </Card>
+
       {toast ? <Alert type="success" showIcon message={toast} closable onClose={() => setToast('')} /> : null}
       {error ? <Alert type="error" showIcon message={error} closable onClose={() => setError('')} /> : null}
 
-      <Card size="small" title="登记样方记录">
-        <Space wrap size={8}>
-          <Select
-            style={{ width: 110 }}
-            value={form.layer}
-            onChange={(v) => setForm({ ...form, layer: v as RegenLayer })}
-            options={REGEN_LAYERS.map((l) => ({ value: l, label: l }))}
-          />
-          <Input
-            style={{ width: 150 }}
-            placeholder="种类"
-            value={form.species}
-            onChange={(e) => setForm({ ...form, species: e.target.value })}
-          />
-          <span>
-            高度 cm
-            <InputNumber
-              style={{ width: 100, marginLeft: 4 }}
-              min={1}
-              max={800}
-              value={form.heightCm}
-              onChange={(v) => setForm({ ...form, heightCm: Number(v ?? 0) })}
+      {locked ? null : (
+        <Card size="small" title={`登记第 ${round} 期样方记录`}>
+          <Space wrap size={8}>
+            <Select
+              style={{ width: 110 }}
+              value={form.layer}
+              onChange={(v) => setForm({ ...form, layer: v as RegenLayer })}
+              options={REGEN_LAYERS.map((l) => ({ value: l, label: l }))}
             />
-          </span>
-          <span>
-            株数
-            <InputNumber
-              style={{ width: 90, marginLeft: 4 }}
-              min={1}
-              max={5000}
-              value={form.count}
-              onChange={(v) => setForm({ ...form, count: Number(v ?? 0) })}
+            <Input
+              style={{ width: 150 }}
+              placeholder="种类"
+              value={form.species}
+              onChange={(e) => setForm({ ...form, species: e.target.value })}
             />
-          </span>
-          <Select
-            style={{ width: 110 }}
-            value={form.ageGroup}
-            onChange={(v) => setForm({ ...form, ageGroup: v })}
-            options={AGE_GROUPS.map((a) => ({ value: a, label: a }))}
-          />
-          <Select
-            style={{ width: 100 }}
-            value={form.distribution}
-            onChange={(v) => setForm({ ...form, distribution: v as Distribution })}
-            options={DISTRIBUTIONS.map((d) => ({ value: d, label: d }))}
-          />
-          <Select
-            style={{ width: 110 }}
-            value={form.browseDamage}
-            onChange={(v) => setForm({ ...form, browseDamage: v as BrowseDamage })}
-            options={BROWSE_DAMAGES.map((d) => ({ value: d, label: d }))}
-          />
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={async () => {
-              if (!form.species.trim()) {
-                setError('种类必填');
-                return;
-              }
-              await addRegen({ ...form, species: form.species.trim() });
-              setError('');
-              setToast(`已登记 ${form.layer} · ${form.species.trim()}（${form.count} 株）`);
-              setForm({ ...form, species: '' });
-            }}
-          >
-            保存记录
-          </Button>
-        </Space>
-      </Card>
+            <span>
+              高度 cm
+              <InputNumber
+                style={{ width: 100, marginLeft: 4 }}
+                min={1}
+                max={800}
+                value={form.heightCm}
+                onChange={(v) => setForm({ ...form, heightCm: Number(v ?? 0) })}
+              />
+            </span>
+            <span>
+              株数
+              <InputNumber
+                style={{ width: 90, marginLeft: 4 }}
+                min={1}
+                max={5000}
+                value={form.count}
+                onChange={(v) => setForm({ ...form, count: Number(v ?? 0) })}
+              />
+            </span>
+            <Select
+              style={{ width: 110 }}
+              value={form.ageGroup}
+              onChange={(v) => setForm({ ...form, ageGroup: v })}
+              options={AGE_GROUPS.map((a) => ({ value: a, label: a }))}
+            />
+            <Select
+              style={{ width: 100 }}
+              value={form.distribution}
+              onChange={(v) => setForm({ ...form, distribution: v as Distribution })}
+              options={DISTRIBUTIONS.map((d) => ({ value: d, label: d }))}
+            />
+            <Select
+              style={{ width: 110 }}
+              value={form.browseDamage}
+              onChange={(v) => setForm({ ...form, browseDamage: v as BrowseDamage })}
+              options={BROWSE_DAMAGES.map((d) => ({ value: d, label: d }))}
+            />
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={async () => {
+                if (!form.species.trim()) {
+                  setError('种类必填');
+                  return;
+                }
+                await addRegen({ ...form, species: form.species.trim(), round });
+                setError('');
+                setToast(`已登记第 ${round} 期 ${form.layer} · ${form.species.trim()}（${form.count} 株）`);
+                setForm({ ...form, species: '' });
+              }}
+            >
+              保存记录
+            </Button>
+          </Space>
+        </Card>
+      )}
 
       <Row gutter={12}>
         <Col span={6}>
@@ -270,7 +327,7 @@ export default function RegenView() {
 
       <Card
         size="small"
-        title="样方记录清单"
+        title={`第 ${round} 期样方记录清单${locked ? '（本期已锁定只读）' : ''}`}
         extra={
           <Select
             style={{ width: 130 }}

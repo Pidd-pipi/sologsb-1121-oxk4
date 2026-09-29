@@ -9,10 +9,12 @@ export interface PlotCardProps {
   treeCount?: number;
   onOpen?: (id: string) => void;
   footer?: ReactNode;
+  /** 标题处附加的交验状态角标 */
+  statusTag?: ReactNode;
 }
 
 /** 样地摘要卡（样地号、地点、面积、郁闭度、优势树种），被样地台账与汇总页消费 */
-export default function PlotCard({ plot, treeCount, onOpen, footer }: PlotCardProps) {
+export default function PlotCard({ plot, treeCount, onOpen, footer, statusTag }: PlotCardProps) {
   return (
     <Card
       size="small"
@@ -21,7 +23,8 @@ export default function PlotCard({ plot, treeCount, onOpen, footer }: PlotCardPr
       title={
         <Space size={6} wrap>
           <span data-testid={`plot-card-${plot.plotNo}`}>{plot.plotNo}</span>
-          <RoundTag round={plot.surveyRound} locked={plot.locked} />
+          <RoundTag round={plot.surveyRound} />
+          {statusTag}
         </Space>
       }
     >

@@ -12,6 +12,8 @@ export interface TreeTableProps {
   onDbhChange?: (id: string, dbhCm: number) => void;
   /** 是否展示径阶分组统计 */
   showClassSummary?: boolean;
+  /** 只读（期次已交验锁定）：不渲染胸径输入框 */
+  readOnly?: boolean;
   emptyText?: string;
 }
 
@@ -23,6 +25,7 @@ export default function TreeTable({
   peers,
   onDbhChange,
   showClassSummary = true,
+  readOnly = false,
   emptyText = '暂无样木记录',
 }: TreeTableProps) {
   const reference = peers && peers.length > 0 ? peers : items;
@@ -49,7 +52,7 @@ export default function TreeTable({
         const abnormal = isDbhAbnormal(row, reference);
         return (
           <span>
-            {onDbhChange ? (
+            {onDbhChange && !readOnly ? (
               <InputNumber
                 size="small"
                 min={0}

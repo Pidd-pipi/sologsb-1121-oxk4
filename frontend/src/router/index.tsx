@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Badge, Layout, Menu, Space, Spin, Typography } from 'antd';
+import { App as AntApp, Badge, Layout, Menu, Space, Spin, Typography } from 'antd';
 import { ExperimentOutlined } from '@ant-design/icons';
 import { usePlotStore } from '../stores/plotStore';
 import { useTreeStore } from '../stores/treeStore';
 import { useRegenStore } from '../stores/regenStore';
+import { useRecheckStore } from '../stores/recheckStore';
+import { useSubmissionStore } from '../stores/submissionStore';
 import { ensureSeedData, markDbVersion, readDbVersion } from '../utils/db';
 import PlotList from '../pages/PlotList';
 import TreeEntry from '../pages/TreeEntry';
@@ -82,19 +84,21 @@ export default function AppRouter() {
   const loadPlots = usePlotStore((s) => s.load);
   const loadTrees = useTreeStore((s) => s.load);
   const loadRegens = useRegenStore((s) => s.load);
+  const loadRechecks = useRecheckStore((s) => s.load);
+  const loadSubmissions = useSubmissionStore((s) => s.load);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       await ensureSeedData();
       markDbVersion();
-      await Promise.all([loadPlots(), loadTrees(), loadRegens()]);
+      await Promise.all([loadPlots(), loadTrees(), loadRegens(), loadRechecks(), loadSubmissions()]);
       if (alive) setReady(true);
     })();
     return () => {
       alive = false;
     };
-  }, [loadPlots, loadTrees, loadRegens]);
+  }, [loadPlots, loadTrees, loadRegens, loadRechecks, loadSubmissions]);
 
   if (!ready) {
     return (
@@ -107,7 +111,9 @@ export default function AppRouter() {
 
   return (
     <BrowserRouter>
-      <Shell />
+      <AntApp>
+        <Shell />
+      </AntApp>
     </BrowserRouter>
   );
 }

@@ -24,7 +24,10 @@ import { useTreeStore } from '../stores/treeStore';
 import { useRegenStore } from '../stores/regenStore';
 import { usePlotFilter } from '../hooks/usePlotFilter';
 import PlotCard from '../components/common/PlotCard';
-import { FOREST_TYPES, PLOT_SHAPES, type PlotDraft, type PlotShape } from '../types/plot';
+import SubmissionControls from '../components/review/SubmissionControls';
+import SubmissionStatusTag from '../components/review/SubmissionStatusTag';
+import { useRoundReview } from '../hooks/useRoundReview';
+import { FOREST_TYPES, PLOT_SHAPES, type Plot, type PlotDraft, type PlotShape } from '../types/plot';
 
 const EMPTY: PlotDraft = {
   plotNo: '',
@@ -45,12 +48,47 @@ const EMPTY: PlotDraft = {
   locked: false,
 };
 
+/** 台账卡片：在卡片内取本期交验状态（问题数）并渲染交验操作 */
+function PlotCardItem({ plot, navigate }: { plot: Plot; navigate: (path: string) => void }) {
+  const trees = useTreeStore((s) => s.items);
+  const review = useRoundReview(plot.id, plot.surveyRound);
+  return (
+    <PlotCard
+      plot={plot}
+      treeCount={trees.filter((t) => t.plotId === plot.id && t.round === plot.surveyRound).length}
+      statusTag={
+        <SubmissionStatusTag
+          status={review.status}
+          issueCount={review.issueCount}
+          unresolvedCount={review.unresolvedCount}
+        />
+      }
+      footer={
+        <Space wrap size={4}>
+          <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/trees`)}>
+            样木录入
+          </Button>
+          <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/regen`)}>
+            更新与灌木
+          </Button>
+          <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/recheck`)}>
+            复查比对
+          </Button>
+          <Button size="small" type="link" onClick={() => navigate(`/summary/${plot.id}`)}>
+            林分汇总
+          </Button>
+          <SubmissionControls plotId={plot.id} round={plot.surveyRound} showTag={false} />
+        </Space>
+      }
+    />
+  );
+}
+
 /** /plots 样地台账：按地点/林型/复查期次筛选，显示面积、优势树种与已录样木数 */
 export default function PlotList() {
   const navigate = useNavigate();
   const plots = usePlotStore((s) => s.items);
   const addPlot = usePlotStore((s) => s.add);
-  const toggleLock = usePlotStore((s) => s.toggleLock);
   const trees = useTreeStore((s) => s.items);
   const regens = useRegenStore((s) => s.items);
   const { filters, patch, reset, result, options } = usePlotFilter();
@@ -199,29 +237,7 @@ export default function PlotList() {
         <Row gutter={[12, 12]}>
           {result.map((plot) => (
             <Col key={plot.id} xs={24} md={12} xl={8}>
-              <PlotCard
-                plot={plot}
-                treeCount={trees.filter((t) => t.plotId === plot.id && t.round === plot.surveyRound).length}
-                footer={
-                  <Space wrap size={4}>
-                    <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/trees`)}>
-                      样木录入
-                    </Button>
-                    <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/regen`)}>
-                      更新与灌木
-                    </Button>
-                    <Button size="small" type="link" onClick={() => navigate(`/plots/${plot.id}/recheck`)}>
-                      复查比对
-                    </Button>
-                    <Button size="small" type="link" onClick={() => navigate(`/summary/${plot.id}`)}>
-                      林分汇总
-                    </Button>
-                    <Button size="small" danger={!plot.locked} onClick={() => toggleLock(plot.id)}>
-                      {plot.locked ? '解锁往期' : '锁定往期'}
-                    </Button>
-                  </Space>
-                }
-              />
+              <PlotCardItem plot={plot} navigate={navigate} />
             </Col>
           ))}
         </Row>
